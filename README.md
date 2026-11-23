@@ -240,3 +240,137 @@ never traversed per project and never expanded into per-project paths, and the
 | `examples/handover_demo.py` | builds a real certificate + ledger covering revoked records, cutoff invisibility, multi-level chains, a multi-group shortest-chain choice, an empty endorsement cycle, complete vs. incomplete projects, and possible-only exclusion; re-runnable with assertions |
 | `large/build_large_handover.py` | generator for an 8 000-project batch over one shared 12-level catalog; asserts the cycle never holds, corrections route around independent groups, and the detail size is independent of project count |
 | `tests/test_handover.py` | 2000-case fuzz of catalog resolution against an independent recursive reference, plus status, selection, validation, CLI and scale tests |
+
+# Batch synchronization of review-group conclusions (`proc_sync.py`)
+
+`solver/proc_sync.py` turns the independently reported streams of the review
+groups into JSON **change packages** the procurement warehouse can apply one
+after another. It never recomputes shortlists or material qualification and
+never changes the handover format above: initialization simply reads the
+existing handover list and takes the `projects` entries whose `status` is
+`complete` as the fixed sync scope for that working directory.
+
+## Model
+
+* A working directory owns one fixed batch of projects. Every group's
+  published stream position starts at `0`; every project conclusion starts
+  empty (`null`) and ownership comes from a supplied initial map.
+* Group streams are 1-based consecutive positions. Delivery files may arrive
+  in batches, out of order, re-sent or re-packaged. Each record names group,
+  position, project and one business action:
+  - `pass` / `fail`: the current owner records or changes the conclusion;
+  - `transfer_out` / `transfer_in`: the two legs of one handover. Both legs
+    carry the same `transfer_id`, `from_group`, `to_group` and `project`, and
+    each leg occupies one position on its own group's stream.
+* A transfer is valid only when the outgoing group actually owns the project.
+  The `transfer_out` moves the project into an in-flight (ownerless) state and
+  clears its conclusion; the `transfer_in` hands it to the new group, which is
+  the only side allowed to write conclusions afterwards.
+* An identical record re-delivered at the same group/position is a no-op; a
+  different record at an occupied position is a conflict. Malformed records,
+  unknown groups/projects and position conflicts reject the **whole delivery
+  file** — none of its other new records survive. Accepted records persist for
+  later runs.
+* Whether an action can happen under the ownership reachable at the time is
+  decided by the close, not by ingestion.
+
+## Close requests and change packages
+
+A close request is `{"release": N, "positions": {group: cutoff, ...}}` with
+inclusive per-group cutoffs.
+
+* No group may be moved back behind its already published position.
+* If any position up to a cutoff is still missing, the answer is
+  `awaiting` with the exact missing positions; no release number is consumed
+  and no group advances. Already received streams stay stored.
+* Transfers are recognized only inside the requested window: the other leg can
+  never be borrowed from outside it. A lone leg, mismatched legs, a transfer id
+  reused for another handover, or the absence of any interleaving that
+  respects both each group's position order and business ownership rejects the
+  close. For example, a conclusion the old group writes *after* its
+  `transfer_out` can never take effect even when the new group has already
+  confirmed receipt — that close is rejected.
+* On success the package contains the release number, the previous and current
+  per-group positions, and one row per project whose final owner or conclusion
+  differs from the previous published state (sorted by project id, with
+  explicit `null` conclusions). Repeated in-window changes collapse into a
+  single before/after row.
+
+Close progress and its package commit atomically in one state file. Retrying a
+published release with the same positions returns the identical package even
+when newer streams have since arrived; the same release can never be bound to
+different positions. One writer is supported at a time (exclusive file lock).
+Ingestion and incremental closes only touch the incoming records and the
+positions past each group's published marker — already published streams and
+the rest of the batch are never re-scanned.
+
+## Command line
+
+All commands take the working directory first and use exit status `2` for a
+rejected request/file (an `awaiting` answer is a normal exit `0`).
+
+```bash
+# one-time initialization from existing material
+python3 -I solver/proc_sync.py init WORKDIR \
+  --handover handover.json --groups groups.json --ownership ownership.json
+
+# accept a delivery file (all-or-nothing); repeat as files arrive
+python3 -I solver/proc_sync.py ingest WORKDIR delivery.json
+
+# request a close; prints the package, or an "awaiting" envelope
+python3 -I solver/proc_sync.py close WORKDIR close-request.json --out pkg.json
+
+# re-fetch a published package (also regenerates its on-disk export)
+python3 -I solver/proc_sync.py fetch WORKDIR 1
+
+# inspect current ownership, conclusions, positions and stored streams
+python3 -I solver/proc_sync.py status WORKDIR
+```
+
+Input file shapes:
+
+```json
+// groups.json
+{"groups": ["G1", "G2"]}
+// ownership.json
+{"ownership": {"P1": "G1", "P2": "G1"}}
+// delivery.json
+{"records": [
+  {"group": "G1", "position": 1, "project": "P1", "action": "pass"},
+  {"group": "G1", "position": 2, "project": "P1", "action": "transfer_out",
+   "transfer_id": "T1", "from_group": "G1", "to_group": "G2"},
+  {"group": "G2", "position": 1, "project": "P1", "action": "transfer_in",
+   "transfer_id": "T1", "from_group": "G1", "to_group": "G2"}
+]}
+// close-request.json
+{"release": 1, "positions": {"G1": 2, "G2": 1}}
+```
+
+Published package shape (also written to `WORKDIR/packages/release-N.json`):
+
+```json
+{
+  "release": 1,
+  "previous_positions": {"G1": 0, "G2": 0},
+  "positions": {"G1": 2, "G2": 1},
+  "changes": [
+    {"project": "P1", "owner": "G2", "conclusion": null}
+  ]
+}
+```
+
+The same operations are available in-process via
+`proc_sync.init_workdir`, `ingest_file`, `request_close`, `fetch_package` and
+`workdir_status`.
+
+## Example and tests
+
+| artifact | shows |
+|---|---|
+| `examples/proc_sync_demo.py` | tiny end-to-end batch: out-of-order and re-sent deliveries, gap-induced awaiting, one-sided and stale-conclusion transfer rejections, an atomic publish, idempotent retries with newer streams waiting, and an incremental second release; re-runnable with assertions |
+| `tests/test_proc_sync.py` | initialization scoping; all-or-nothing ingestion conflicts; gaps/rollback/release numbering; transfer pairing, ownership-respecting merges, circular waits, chain transfers; package diffing; idempotent retry semantics; incrementality; full CLI coverage |
+
+```bash
+python3 -I -m unittest discover -s tests
+python3 -I examples/proc_sync_demo.py
+```
