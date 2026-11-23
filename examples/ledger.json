@@ -1,0 +1,209 @@
+{
+  "ledger_id": "demo-ledger-001",
+  "required_items": [
+    "business_license",
+    "permit",
+    "financial_report"
+  ],
+  "catalog": {
+    "L1": {
+      "kind": "original"
+    },
+    "L2": {
+      "kind": "original"
+    },
+    "L3": {
+      "kind": "original"
+    },
+    "L9-REVOKED": {
+      "kind": "original"
+    },
+    "D1": {
+      "kind": "derived",
+      "basis_groups": [
+        [
+          "L1",
+          "L2"
+        ],
+        [
+          "L3",
+          "D2"
+        ]
+      ]
+    },
+    "D2": {
+      "kind": "derived",
+      "basis_groups": [
+        [
+          "D1"
+        ]
+      ]
+    },
+    "D3": {
+      "kind": "derived",
+      "basis_groups": [
+        [
+          "D2"
+        ]
+      ]
+    },
+    "Q1": {
+      "kind": "derived",
+      "basis_groups": [
+        [
+          "L1"
+        ]
+      ]
+    },
+    "Q2-REVOKED": {
+      "kind": "derived",
+      "basis_groups": [
+        [
+          "L2"
+        ]
+      ]
+    },
+    "X1": {
+      "kind": "derived",
+      "basis_groups": [
+        [
+          "X2"
+        ]
+      ]
+    },
+    "X2": {
+      "kind": "derived",
+      "basis_groups": [
+        [
+          "X1"
+        ]
+      ]
+    }
+  },
+  "projects": {
+    "P1": {
+      "business_license": [
+        "D3",
+        "D1"
+      ],
+      "permit": [
+        "Q1"
+      ],
+      "financial_report": [
+        "X1",
+        "D2"
+      ]
+    },
+    "P2": {
+      "business_license": [
+        "L1"
+      ],
+      "permit": [
+        "Q2-REVOKED"
+      ]
+    },
+    "P3": {
+      "business_license": [
+        "L1"
+      ],
+      "permit": [
+        "Q1"
+      ],
+      "financial_report": [
+        "D1"
+      ]
+    }
+  },
+  "status_log": [
+    {
+      "version": "L1",
+      "effective_at": 10,
+      "received_at": 5,
+      "state": "valid"
+    },
+    {
+      "version": "L2",
+      "effective_at": 12,
+      "received_at": 6,
+      "state": "valid"
+    },
+    {
+      "version": "L3",
+      "effective_at": 15,
+      "received_at": 7,
+      "state": "valid"
+    },
+    {
+      "version": "L3",
+      "effective_at": 15,
+      "received_at": 7,
+      "state": "valid"
+    },
+    {
+      "version": "D1",
+      "effective_at": 20,
+      "received_at": 10,
+      "state": "valid"
+    },
+    {
+      "version": "D2",
+      "effective_at": 25,
+      "received_at": 11,
+      "state": "valid"
+    },
+    {
+      "version": "D3",
+      "effective_at": 30,
+      "received_at": 12,
+      "state": "valid"
+    },
+    {
+      "version": "Q1",
+      "effective_at": 18,
+      "received_at": 9,
+      "state": "valid"
+    },
+    {
+      "version": "Q2-REVOKED",
+      "effective_at": 10,
+      "received_at": 4,
+      "state": "valid"
+    },
+    {
+      "version": "Q2-REVOKED",
+      "effective_at": 40,
+      "received_at": 20,
+      "state": "revoked"
+    },
+    {
+      "version": "L9-REVOKED",
+      "effective_at": 8,
+      "received_at": 3,
+      "state": "valid"
+    },
+    {
+      "version": "L9-REVOKED",
+      "effective_at": 9,
+      "received_at": 4,
+      "state": "revoked"
+    },
+    {
+      "version": "X1",
+      "effective_at": 20,
+      "received_at": 8,
+      "state": "valid"
+    },
+    {
+      "version": "X2",
+      "effective_at": 20,
+      "received_at": 8,
+      "state": "valid"
+    },
+    {
+      "version": "L1",
+      "effective_at": 130,
+      "received_at": 60,
+      "state": "revoked"
+    }
+  ]
+}

@@ -141,3 +141,102 @@ The suite cross-checks cell bounds, pairwise difference extremes, rank bounds
 (fast vs. reference vs. exhaustive enumeration), witness legality and
 recomputability, the certificate's bucket/position invariants, rejection of
 contradictory material, and the scale properties above.
+
+# Handover lists for the next review round
+
+`solver/handover.py` consumes the **existing** rank certificate (it never
+recomputes a rank and never changes the certificate interface) together with a
+material ledger, and emits the JSON handover list for the projects that are
+**certain** to be shortlisted. A project whose exact position is uncertain but
+whose inclusion is certain is handed over (it sits in
+`top_k.must_be_in_top_k`); a project that can only possibly make the cut
+(`may_be_in_top_k`) is never handed over.
+
+## Running it
+
+```bash
+python3 -I solver/handover.py CERT.json LEDGER.json \
+  --business-cutoff 100 --intake-cutoff 50 --out handover.json
+```
+
+Both cutoffs are inclusive integers. Exit status `2` means the inputs were
+rejected (bad structure, dangling version reference, contradictory status
+records, …) and **no** partial list is written.
+
+## Ledger format
+
+```json
+{
+  "ledger_id": "demo-ledger-001",
+  "required_items": ["business_license", "permit", "financial_report"],
+  "catalog": {
+    "L1": {"kind": "original"},
+    "D1": {"kind": "derived", "basis_groups": [["L1", "L2"], ["L3", "D2"]]}
+  },
+  "projects": {
+    "P1": {"business_license": ["D3", "D1"], "permit": ["Q1"]}
+  },
+  "status_log": [
+    {"version": "L1", "effective_at": 10, "received_at": 5, "state": "valid"},
+    {"version": "L1", "effective_at": 40, "received_at": 20, "state": "revoked"}
+  ]
+}
+```
+
+| section | meaning |
+|---|---|
+| `required_items` | the mandatory material templates; order is the reporting order |
+| `catalog` | every version defined exactly once. `original` versions are issued directly; `derived` versions list one or more non-empty `basis_groups` |
+| `projects` | per project and per mandatory item, a **priority-ordered** candidate version list (may be omitted). References name an exact version — nothing is ever swapped for a later submission of the same material |
+| `status_log` | `effective_at` (business time) and `received_at` (intake time) per version, each `valid` or `revoked`; the log may be shuffled and repeated |
+
+A basis group is a conjunction (every member must hold) and the list of groups
+is a disjunction (any one group suffices); group order breaks ties between
+equally deep grounds.
+
+### Which status record governs
+
+A record is usable only when `effective_at <= business_cutoff` **and**
+`received_at <= intake_cutoff`. Among usable records of one version the most
+recent `effective_at` wins, then the latest `received_at`; exact duplicate
+records count once. If visible records with the same two times carry opposite
+states the whole run is rejected. A version with no usable record, or whose
+governing record is `revoked`, is invalid and cannot ground anything.
+
+### What "holds" means
+
+A derived version holds only when one of its groups is fully grounded and the
+chain reaches **valid originals** in finitely many steps. Mutual recognition
+may form cycles, but a cycle whose members never reach a valid original proves
+nothing and never holds. When several groups hold, the chosen one has the
+shortest longest trace chain (`ground_depth`); equal depth resolves by catalog
+group order. A status correction invalidates the version and the materials that
+actually depend on it; an independently grounded alternative group survives.
+
+### Per-project decision and output
+
+For each certain project and each mandatory item the first **holding** version
+in candidate priority order is selected. When every item is present the project
+is `complete` and its selected versions are listed; otherwise it is
+`incomplete`, reports only `missing_items`, and hands over no partial
+materials. The output carries the SHA-256 of the exact certificate bytes, both
+cutoffs, and a shared `versions` section: each referenced version appears once
+with the governing status record and the selected direct basis ids, so the
+grounds can be checked level by level with no cycles and no unrelated versions.
+
+## Why it scales
+
+The catalog is resolved **once, globally**, before any project is inspected, as
+a least fixpoint that only re-examines groups whose members changed in the
+previous round (bounded by the longest real evidence chain). Per project the
+work is then just a walk over its short candidate lists; the shared graph is
+never traversed per project and never expanded into per-project paths, and the
+`versions` section stays bounded by the catalog size.
+
+## Handover examples and tests
+
+| artifact | shows |
+|---|---|
+| `examples/handover_demo.py` | builds a real certificate + ledger covering revoked records, cutoff invisibility, multi-level chains, a multi-group shortest-chain choice, an empty endorsement cycle, complete vs. incomplete projects, and possible-only exclusion; re-runnable with assertions |
+| `large/build_large_handover.py` | generator for an 8 000-project batch over one shared 12-level catalog; asserts the cycle never holds, corrections route around independent groups, and the detail size is independent of project count |
+| `tests/test_handover.py` | 2000-case fuzz of catalog resolution against an independent recursive reference, plus status, selection, validation, CLI and scale tests |

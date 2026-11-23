@@ -1,0 +1,70 @@
+{
+  "K": 3,
+  "candidate_count": 5,
+  "per_candidate": {
+    "P1": {
+      "best_rank": 1,
+      "worst_rank": 1,
+      "composite_min_possible": 80,
+      "composite_max_possible": 100
+    },
+    "P2": {
+      "best_rank": 2,
+      "worst_rank": 2,
+      "composite_min_possible": 80,
+      "composite_max_possible": 80
+    },
+    "P3": {
+      "best_rank": 3,
+      "worst_rank": 5,
+      "composite_min_possible": 0,
+      "composite_max_possible": 80
+    },
+    "P4": {
+      "best_rank": 3,
+      "worst_rank": 5,
+      "composite_min_possible": 0,
+      "composite_max_possible": 80
+    },
+    "P5": {
+      "best_rank": 3,
+      "worst_rank": 5,
+      "composite_min_possible": 0,
+      "composite_max_possible": 80
+    }
+  },
+  "top_k": {
+    "positions": [
+      {
+        "position": 1,
+        "certain_holder": "P1",
+        "candidates_forced_to_this_position": [
+          "P1"
+        ]
+      },
+      {
+        "position": 2,
+        "certain_holder": "P2",
+        "candidates_forced_to_this_position": [
+          "P2"
+        ]
+      },
+      {
+        "position": 3,
+        "certain_holder": null,
+        "candidates_forced_to_this_position": []
+      }
+    ],
+    "must_be_in_top_k": [
+      "P1",
+      "P2"
+    ],
+    "may_be_in_top_k": [
+      "P3",
+      "P4",
+      "P5"
+    ],
+    "cannot_be_in_top_k": []
+  },
+  "witnesses": {}
+}
