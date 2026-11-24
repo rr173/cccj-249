@@ -11,3 +11,6 @@ python3 -I large/build_large_handover.py
 python3 -I solver/handover.py examples/certificate.json examples/ledger.json \
   --business-cutoff 100 --intake-cutoff 50 --out /tmp/handover_check.json
 echo "handover CLI wrote /tmp/handover_check.json"
+echo "== examples/ap_ledger_demo.py"
+python3 -I examples/ap_ledger_demo.py > /dev/null
+python3 -I large/build_large_ap_ledger.py > /dev/null

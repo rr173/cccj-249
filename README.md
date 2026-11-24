@@ -374,3 +374,139 @@ The same operations are available in-process via
 python3 -I -m unittest discover -s tests
 python3 -I examples/proc_sync_demo.py
 ```
+
+# Local accounts-payable settlement ledger (`ap_ledger.py`)
+
+After handover, finance still has to prove which supplier-invoice quantities
+are backed by goods actually received, and which earlier bookings a red
+(reversal) voucher cancels. `ap_ledger.py` keeps that answer as a local
+ledger of JSON vouchers and the settlement entries they generate **per order
+line**. Like `proc_sync.py`, it never re-judges the procurement decision:
+initialization reads the existing handover list and takes exactly the
+`projects` entries whose `status` is `complete` as the eligible projects, and
+a separately supplied, fixed order-line → project table names the order lines
+the ledger accepts. Nothing about shortlisting, material qualification or
+review conclusions is recomputed.
+
+## Scope initialization
+
+```bash
+python3 -I solver/ap_ledger.py init WORKDIR \
+  --handover handover.json --order-lines order_lines.json
+```
+
+The mapping file has the shape
+
+```json
+{"order_lines": [
+  {"order_line": "OL-100", "project": "P1"},
+  {"order_line": "OL-200", "project": "P2"}]}
+```
+
+and every line must map to a `complete` handover project; duplicate lines,
+non-complete projects and empty scopes reject initialization. The ledger
+starts with no vouchers and no entries.
+
+## Vouchers and correction batches
+
+Voucher ids are globally unique; business times are integers (any sign).
+
+```json
+// goods receipt
+{"voucher": "GR1", "type": "receipt", "business_time": 10,
+ "order_line": "OL-100", "quantity": 5}
+// invoice (one or more lines; amount_cents is a non-negative total)
+{"voucher": "INV1", "type": "invoice", "business_time": 20,
+ "lines": [{"line": "1", "order_line": "OL-100",
+            "quantity": 10, "amount_cents": 1000}]}
+// red voucher: names only the original invoice line and a positive quantity;
+// its order line is the original line's order line
+{"voucher": "RD1", "type": "red", "business_time": 30,
+ "original_invoice": "INV1", "original_line": "1", "quantity": 3}
+```
+
+Corrections arrive as batches of `add` / `replace` / `delete` operations:
+
+```bash
+python3 -I solver/ap_ledger.py apply WORKDIR batch.json
+```
+
+* one voucher id may be operated on at most once per batch, and batch order
+  carries no meaning — the result is defined by the voucher set after the
+  whole batch applies;
+* `replace` keeps the id and the type and may re-point a receipt or an
+  invoice line at another order line (its red vouchers follow);
+* an unknown order line, a dangling original-invoice reference, a red
+  voucher not strictly after its original invoice, red cumulative quantity
+  above the original line quantity, or any malformed shape rejects the
+  **whole batch** — the stored vouchers and entries stay byte-identical.
+
+## Settlement rules (per order line)
+
+Vouchers are ordered by `(business_time, voucher id)`.
+
+* An invoice line can only consume receipts preceding it that still hold
+  balance, earliest first (FIFO); one invoice may split across several
+  receipts and partially settle. The quantity with no receipt balance books
+  no payable entry and is never auto-settled by receipts arriving later.
+* A red voucher must be ordered after its original invoice. Reversal starts
+  at the not-yet-reversed tail and first cancels not-yet-settled units (no
+  entry). Only when it reaches already-settled units does it book negative
+  entries and return that quantity to the receipt that originally carried
+  the segment, so later invoices can use it again (FIFO still applies).
+* Money follows the original line's quantity order. With original quantity
+  `Q` and total `C` cents, the first `k` units book `floor(k*C/Q)` cents and
+  any segment is the difference of two such cumulatives. A reversal
+  therefore claws back the exact cents the segment originally booked — it is
+  never re-amortized from the reversal quantity.
+
+## Export
+
+```bash
+# finance's per-order-line JSON view
+python3 -I solver/ap_ledger.py export WORKDIR OL-100 --out entries.json
+# every entry of every order line in one global order
+python3 -I solver/ap_ledger.py export-all WORKDIR
+python3 -I solver/ap_ledger.py status WORKDIR
+python3 -I solver/ap_ledger.py vouchers WORKDIR
+```
+
+Each entry row is the relationship between one settling/reversing voucher
+and one goods receipt:
+
+```json
+{"order_line": "OL-100", "project": "P1", "voucher": "RD1",
+ "original_invoice": "INV1", "original_line": "1", "receipt": "GR1",
+ "quantity": -2, "amount_cents": -200}
+```
+
+Combinations without real movement produce no row; a zero-amount row with
+non-zero quantity is kept. Rows are ordered by the event voucher's business
+time, then voucher id, then receipt id (then original line number). Exit
+status `2` means the request or batch was rejected with no partial effect.
+
+## Durability, incrementality and scale
+
+All state lives in one `state.json` written atomically (temp file +
+`os.replace`) under an exclusive file lock, so vouchers and their entries
+can never be observed as two mixed generations after a crash; one writer is
+supported. A correction batch only re-validates and re-settles the order
+lines its touched vouchers belong to — the history of every other order line
+is never re-scanned and its stored entries stay byte-identical. Quantities
+are handled as interval endpoints with integer cumulative arithmetic, never
+expanded per unit, so a single voucher may carry quantities of any size
+(the scale test uses `10**12`).
+
+## Example, scale check and tests
+
+| artifact | shows |
+|---|---|
+| `examples/ap_ledger_demo.py` | FIFO splits and partial settlement, floor-cumulative money, red vouchers cancelling the unwritten tail then clawing back exact cents and returning balance, invoice re-pointing that moves red vouchers and withdraws stale entries, and every all-or-nothing rejection path; re-runnable with assertions |
+| `large/build_large_ap_ledger.py` | 2 000-order-line bulk batch plus a `10**12`-unit voucher, then a one-line correction proven not to re-scan the rest of the ledger |
+| `tests/test_ap_ledger.py` | scope initialization; FIFO/partial/floor settlement; red tail, clawback, returned-balance and exact-cent rules; every rejection rule; replace/delete/re-pointing corrections; atomicity; incrementality and scale; 180 random batches fuzzed against an independent unit-expanded reference implementation; full CLI coverage |
+
+```bash
+python3 -I -m unittest discover -s tests
+python3 -I examples/ap_ledger_demo.py
+python3 -I large/build_large_ap_ledger.py
+```
